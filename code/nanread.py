@@ -192,7 +192,6 @@ def NaNREAD(data: np.ndarray) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    import argparse
     import scipy.io
     import sys
 
@@ -203,28 +202,16 @@ if __name__ == "__main__":
             print(f"Error loading {filepath}: {e}")
             return None
 
-    parser = argparse.ArgumentParser(description="Run NaNREAD algorithm on a dataset.")
-    parser.add_argument('mat_file', type=str, help='Path to the .mat file')
-    parser.add_argument('--variable', type=str, default=None, help='Variable name in the .mat file to process')
-
-    args = parser.parse_args()
-
-    data_dict = load_mat(args.mat_file)
+    filepath = 'code/Example.mat'
+    data_dict = load_mat(filepath)
     if data_dict is None:
         sys.exit(1)
 
     data = None
-    if args.variable:
-        if args.variable in data_dict:
-            data = data_dict[args.variable]
-        else:
-            print(f"Variable '{args.variable}' not found in the MAT file.")
-            sys.exit(1)
-    else:
-        for key, val in data_dict.items():
-            if not key.startswith('__') and hasattr(val, 'shape'):
-                data = np.array(val)
-                break
+    for key, val in data_dict.items():
+        if not key.startswith('__') and hasattr(val, 'shape'):
+            data = np.array(val)
+            break
 
     if data is None:
         print("Could not find a valid variable in the file.")
