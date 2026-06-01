@@ -112,6 +112,17 @@ def compute_weight(NaNGS_i: List[int], n: int) -> float:
 def NaNREAD(data: np.ndarray) -> np.ndarray:
     n, m = data.shape
 
+    # Min-Max Normalization (Data Preprocessing)
+    data_std = np.zeros_like(data, dtype=float)
+    for j in range(m):
+        col_min = np.min(data[:, j])
+        col_max = np.max(data[:, j])
+        if col_max > col_min:
+            data_std[:, j] = (data[:, j] - col_min) / (col_max - col_min)
+        else:
+            data_std[:, j] = 0.0
+    data = data_std
+
     nane_single = []
     for k in range(m):
         feature_data = data[:, k:k+1]
