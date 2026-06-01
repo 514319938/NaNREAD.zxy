@@ -1,14 +1,10 @@
 import numpy as np
 from typing import Tuple, List
+from scipy.spatial.distance import pdist, squareform
 
 def calculate_distance_matrix(data: np.ndarray) -> np.ndarray:
     """Calculates pairwise Euclidean distances"""
-    n = data.shape[0]
-    dist_matrix = np.zeros((n, n))
-    for i in range(n):
-        for j in range(n):
-            dist_matrix[i, j] = np.sqrt(np.sum((data[i] - data[j]) ** 2))
-    return dist_matrix
+    return squareform(pdist(data, metric='euclidean'))
 
 def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
     n = dist_matrix.shape[0]
@@ -23,12 +19,9 @@ def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
         return sorted_dist_matrix[:, idx]
 
     def get_kNN_SP(k_dists_val):
-        knn_subsets = []
-        for i in range(n):
-            neighbors = np.where(dist_matrix[i] <= k_dists_val[i] + 1e-9)[0]
-            neighbors = neighbors[neighbors != i]
-            knn_subsets.append(neighbors.tolist())
-        return knn_subsets
+        mask = dist_matrix <= (k_dists_val[:, None] + 1e-9)
+        np.fill_diagonal(mask, False)
+        return [np.where(row)[0].tolist() for row in mask]
 
     knns_k_minus_1 = [[] for _ in range(n)]
 
@@ -145,11 +138,17 @@ def NaNREAD(data: np.ndarray) -> np.ndarray:
 
         NaNE_oi_list = []
         for i in range(n):
-            keep_indices = [j for j in range(n) if j != i]
-            sub_dist_matrix = dist_matrix[np.ix_(keep_indices, keep_indices)]
-            sub_lam, sub_NNAM = natural_neighbor_search(sub_dist_matrix)
-            sub_NaNGS = natural_neighbor_granularity(sub_NNAM)
-            NaNE_oi = natural_neighbor_entropy(sub_NaNGS, n - 1)
+            entropy_val = 0.0
+            for j in range(n):
+                if i == j:
+                    continue
+                count = len(NaNGS[j])
+                if i in NaNGS[j]:
+                    count -= 1
+                ratio = count / (n - 1)
+                if ratio > 0:
+                    entropy_val += np.log2(ratio)
+            NaNE_oi = -entropy_val / (n - 1) if n > 1 else 0.0
             NaNE_oi_list.append(NaNE_oi)
 
         NaNRE_list = [compute_NaNRE(NaNE, NaNE_oi) for NaNE_oi in NaNE_oi_list]
