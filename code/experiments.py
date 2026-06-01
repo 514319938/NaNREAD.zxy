@@ -5,6 +5,7 @@ import scipy.io
 import xlwt
 from sklearn.metrics import roc_auc_score
 from nanread import NaNREAD
+import multiprocessing
 
 def ensure_dir(path):
     if not os.path.exists(path):
@@ -35,7 +36,7 @@ def process_dataset(filepath):
 
     data = None
     for key, val in data_dict.items():
-        if not key.startswith('__') and hasattr(val, 'shape'):
+        if not key.startswith('__') and hasattr(val, 'shape') and len(val.shape) > 1:
             data = np.array(val)
             break
 
@@ -97,12 +98,11 @@ def main():
     data_dir = 'data'
     ensure_dir('results')
 
-    files = [f for f in os.listdir(data_dir) if f.endswith('.mat') and not f.endswith('ori.mat')]
+    files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.mat') and not f.endswith('ori.mat')]
     files.sort()
 
-    for f in files:
-        filepath = os.path.join(data_dir, f)
-        process_dataset(filepath)
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+        pool.map(process_dataset, files)
 
     print("All datasets processed.", flush=True)
 

@@ -132,25 +132,24 @@ def NaNREAD(data: np.ndarray) -> np.ndarray:
         NaNGS = natural_neighbor_granularity(NNAM)
         NaNE = natural_neighbor_entropy(NaNGS, n)
 
-        NaNE_oi_list = []
+        counts = np.array([len(g) for g in NaNGS])
+        new_counts_matrix = counts[:, None] - NNAM # shape (n, n)
+        ratio_matrix = new_counts_matrix / (n - 1)
+        np.fill_diagonal(ratio_matrix, 0)
+
+        log2_ratios = np.zeros_like(ratio_matrix, dtype=float)
+        mask = ratio_matrix > 0
+        log2_ratios[mask] = np.log2(ratio_matrix[mask])
+
+        entropy_sums = np.sum(log2_ratios, axis=0) # sum over j
+        NaNE_oi_list = -entropy_sums / (n - 1) if n > 1 else np.zeros(n)
+
+        NaNRE_list = np.zeros(n)
         for i in range(n):
-            entropy_val = 0.0
-            for j in range(n):
-                if i == j:
-                    continue
-                count = len(NaNGS[j])
-                if i in NaNGS[j]:
-                    count -= 1
-                ratio = count / (n - 1)
-                if ratio > 0:
-                    entropy_val += np.log2(ratio)
-            NaNE_oi = -entropy_val / (n - 1) if n > 1 else 0.0
-            NaNE_oi_list.append(NaNE_oi)
+            NaNRE_list[i] = compute_NaNRE(NaNE, NaNE_oi_list[i])
 
-        NaNRE_list = [compute_NaNRE(NaNE, NaNE_oi) for NaNE_oi in NaNE_oi_list]
-        W_list = [compute_weight(NaNGS[i], n) for i in range(n)]
-
-        return NaNRE_list, W_list
+        W_list = np.sqrt(counts / n)
+        return NaNRE_list.tolist(), W_list.tolist()
 
     ERMAS = np.zeros((n, m))
     WMAS = np.zeros((n, m))
