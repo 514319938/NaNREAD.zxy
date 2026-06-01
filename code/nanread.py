@@ -10,43 +10,31 @@ def calculate_distance_matrix(data: np.ndarray) -> np.ndarray:
             dist_matrix[i, j] = np.sqrt(np.sum((data[i] - data[j]) ** 2))
     return dist_matrix
 
-def k_distance(dist_matrix: np.ndarray, k: int) -> np.ndarray:
-    n = dist_matrix.shape[0]
-    k_dists = np.zeros(n)
-    for i in range(n):
-        dists = dist_matrix[i, :]
-        sorted_dists = np.sort(dists)
-        if k < n:
-            k_dists[i] = sorted_dists[k]
-        else:
-            k_dists[i] = sorted_dists[-1]
-    return k_dists
-
-def kNN_SP(dist_matrix: np.ndarray, k_dists: np.ndarray) -> List[List[int]]:
-    n = dist_matrix.shape[0]
-    knn_subsets = []
-    for i in range(n):
-        # Ensure floating point issues don't skip exactly equal distances
-        neighbors = np.where(dist_matrix[i] <= k_dists[i] + 1e-9)[0]
-        neighbors = neighbors[neighbors != i]
-        knn_subsets.append(neighbors.tolist())
-    return knn_subsets
-
 def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
     n = dist_matrix.shape[0]
     k = 1
     flag = 0
     NNAM = np.zeros((n, n), dtype=int)
 
-    while flag == 0:
-        k_dists = k_distance(dist_matrix, k)
-        knns_k = kNN_SP(dist_matrix, k_dists)
+    sorted_dist_matrix = np.sort(dist_matrix, axis=1)
 
-        if k > 1:
-            k_minus_1_dists = k_distance(dist_matrix, k - 1)
-            knns_k_minus_1 = kNN_SP(dist_matrix, k_minus_1_dists)
-        else:
-            knns_k_minus_1 = [[] for _ in range(n)]
+    def get_k_dists(k_val):
+        idx = min(k_val, n - 1)
+        return sorted_dist_matrix[:, idx]
+
+    def get_kNN_SP(k_dists_val):
+        knn_subsets = []
+        for i in range(n):
+            neighbors = np.where(dist_matrix[i] <= k_dists_val[i] + 1e-9)[0]
+            neighbors = neighbors[neighbors != i]
+            knn_subsets.append(neighbors.tolist())
+        return knn_subsets
+
+    knns_k_minus_1 = [[] for _ in range(n)]
+
+    while flag == 0:
+        k_dists = get_k_dists(k)
+        knns_k = get_kNN_SP(k_dists)
 
         for i in range(n):
             diff = list(set(knns_k[i]) - set(knns_k_minus_1[i]))
@@ -64,6 +52,7 @@ def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
         if all_have_neighbors:
             flag = 1
 
+        knns_k_minus_1 = knns_k
         k += 1
         if k >= n:
             break
