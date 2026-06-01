@@ -14,7 +14,7 @@ def main():
     nanread_aucs = []
 
     for idx, row in df.iterrows():
-        dataset_name = str(row['dataset'])
+        dataset_name = str(row['dataset']).strip() # Fixed space issue just in case
         dataset_result_path = os.path.join('results', dataset_name, f"{dataset_name}.xls")
 
         auc_score = np.nan
@@ -42,12 +42,10 @@ def main():
     wb = xlwt.Workbook()
     ws = wb.add_sheet('Sheet1')
 
-    # Write columns
     columns = list(df.columns)
     for col_idx, col_name in enumerate(columns):
         ws.write(0, col_idx, str(col_name))
 
-    # Write data
     for row_idx, row in df.iterrows():
         for col_idx, col_name in enumerate(columns):
             val = row[col_name]

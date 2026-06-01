@@ -22,6 +22,12 @@ def process_dataset(filepath):
     if dataset_name == 'Example':
         return
 
+    result_dir = os.path.join('results', dataset_name)
+    xls_out_path = os.path.join(result_dir, f"{dataset_name}.xls")
+    if os.path.exists(xls_out_path):
+        print(f"Already processed {dataset_name}. Skipping...", flush=True)
+        return
+
     print(f"Processing {dataset_name}...", flush=True)
     data_dict = load_mat(filepath)
     if data_dict is None:
