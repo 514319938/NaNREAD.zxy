@@ -230,6 +230,6 @@ if __name__ == "__main__":
 
     try:
         scores = NaNREAD(data)
-         print("NaNREAF=", scores)
+        print("NaNREAF=", scores)
     except Exception as e:
         print(f"An error occurred during algorithm execution: {e}")
