@@ -9,7 +9,6 @@ def calculate_distance_matrix(data: np.ndarray) -> np.ndarray:
 def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
     n = dist_matrix.shape[0]
     k = 1
-    flag = 0
     NNAM = np.zeros((n, n), dtype=int)
 
     sorted_dist_matrix = np.sort(dist_matrix, axis=1)
@@ -18,39 +17,36 @@ def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
         idx = min(k_val, n - 1)
         return sorted_dist_matrix[:, idx]
 
-    def get_kNN_SP(k_dists_val):
-        mask = dist_matrix <= (k_dists_val[:, None] + 1e-9)
-        np.fill_diagonal(mask, False)
-        return [np.where(row)[0].tolist() for row in mask]
+    knns_k_minus_1_mask = np.zeros((n, n), dtype=bool)
+    unconnected_count = n
+    has_neighbor = np.zeros(n, dtype=bool)
 
-    knns_k_minus_1 = [[] for _ in range(n)]
-
-    while flag == 0:
+    while True:
         k_dists = get_k_dists(k)
-        knns_k = get_kNN_SP(k_dists)
+        knns_k_mask = dist_matrix <= (k_dists[:, None] + 1e-9)
+        np.fill_diagonal(knns_k_mask, False)
 
-        for i in range(n):
-            diff = list(set(knns_k[i]) - set(knns_k_minus_1[i]))
-            for j in diff:
-                if i in knns_k[j] and NNAM[i, j] != 1:
-                    NNAM[i, j] = 1
-                    NNAM[j, i] = 1
+        diff_mask = knns_k_mask & ~knns_k_minus_1_mask
+        new_edges = diff_mask & knns_k_mask.T
+        sym_new_edges = new_edges | new_edges.T
 
-        all_have_neighbors = True
-        for i in range(n):
-            if np.sum(NNAM[i, :]) == 0:
-                all_have_neighbors = False
-                break
+        NNAM[sym_new_edges] = 1
 
-        if all_have_neighbors:
-            flag = 1
+        if unconnected_count > 0:
+            newly_connected = sym_new_edges.any(axis=1)
+            just_connected = newly_connected & ~has_neighbor
+            has_neighbor |= just_connected
+            unconnected_count -= just_connected.sum()
 
-        knns_k_minus_1 = knns_k
+        if unconnected_count == 0:
+            break
+
+        knns_k_minus_1_mask = knns_k_mask
         k += 1
         if k >= n:
             break
 
-    lam = k - 1
+    lam = k - 1 if k > 1 else 1
     return lam, NNAM
 
 def natural_neighbor_granularity(NNAM: np.ndarray) -> List[List[int]]:
