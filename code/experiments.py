@@ -22,7 +22,7 @@ def process_dataset(filepath):
     if dataset_name == 'Example':
         return
 
-    print(f"Processing {dataset_name}...")
+    print(f"Processing {dataset_name}...", flush=True)
     data_dict = load_mat(filepath)
     if data_dict is None:
         return
@@ -34,15 +34,14 @@ def process_dataset(filepath):
             break
 
     if data is None:
-        print(f"Skipping {dataset_name}: No valid array found.")
+        print(f"Skipping {dataset_name}: No valid array found.", flush=True)
         return
 
     n = data.shape[0]
     if n >= 2000:
-        print(f"Skipping {dataset_name}: n={n} >= 2000")
+        print(f"Skipping {dataset_name}: n={n} >= 2000", flush=True)
         return
 
-    # Assume last column is the label
     X = data[:, :-1]
     y = data[:, -1]
 
@@ -50,23 +49,21 @@ def process_dataset(filepath):
     try:
         opt_out_scores = NaNREAD(X)
     except Exception as e:
-        print(f"Error running NaNREAD on {dataset_name}: {e}")
+        print(f"Error running NaNREAD on {dataset_name}: {e}", flush=True)
         return
     opt_time = time.time() - start_time
 
     try:
         opt_ROC_AUC = roc_auc_score(y, opt_out_scores)
     except Exception as e:
-        print(f"Error calculating AUC for {dataset_name}: {e}")
+        print(f"Error calculating AUC for {dataset_name}: {e}", flush=True)
         opt_ROC_AUC = np.nan
 
-    print(f"{dataset_name} completed in {opt_time:.2f}s with AUC {opt_ROC_AUC:.4f}")
+    print(f"{dataset_name} completed in {opt_time:.2f}s with AUC {opt_ROC_AUC:.4f}", flush=True)
 
-    # Save results
     result_dir = os.path.join('results', dataset_name)
     ensure_dir(result_dir)
 
-    # MAT file
     mat_out_path = os.path.join(result_dir, f"{dataset_name}.mat")
     scipy.io.savemat(mat_out_path, {
         'opt_out_scores': opt_out_scores.reshape(-1, 1),
@@ -74,7 +71,6 @@ def process_dataset(filepath):
         'opt_time': opt_time
     })
 
-    # XLS file
     xls_out_path = os.path.join(result_dir, f"{dataset_name}.xls")
     wb = xlwt.Workbook()
     ws = wb.add_sheet('Results')
@@ -101,6 +97,8 @@ def main():
     for f in files:
         filepath = os.path.join(data_dir, f)
         process_dataset(filepath)
+
+    print("All datasets processed.", flush=True)
 
 if __name__ == '__main__':
     main()
