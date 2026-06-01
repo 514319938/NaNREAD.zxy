@@ -54,7 +54,8 @@ def process_dataset(filepath):
 
     start_time = time.time()
     try:
-        opt_out_scores = NaNREAD(X)
+        # Avoid nested multiprocessing: process datasets sequentially but parallelize NaNREAD
+        opt_out_scores = NaNREAD(X, n_jobs=-1)
     except Exception as e:
         print(f"Error running NaNREAD on {dataset_name}: {e}", flush=True)
         return
@@ -101,8 +102,8 @@ def main():
     files = [os.path.join(data_dir, f) for f in os.listdir(data_dir) if f.endswith('.mat') and not f.endswith('ori.mat')]
     files.sort()
 
-    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-        pool.map(process_dataset, files)
+    for f in files:
+        process_dataset(f)
 
     print("All datasets processed.", flush=True)
 

@@ -1,9 +1,10 @@
 import numpy as np
 from typing import Tuple, List
 from scipy.spatial.distance import pdist, squareform
+import multiprocessing
+from functools import partial
 
 def calculate_distance_matrix(data: np.ndarray) -> np.ndarray:
-    """Calculates pairwise Euclidean distances"""
     return squareform(pdist(data, metric='euclidean'))
 
 def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
@@ -50,7 +51,6 @@ def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
     return lam, NNAM
 
 def natural_neighbor_granularity(NNAM: np.ndarray) -> List[List[int]]:
-    """Calculates NaNGS given NNAM. Formula 2-11."""
     n = NNAM.shape[0]
     NaNGS = []
     for i in range(n):
@@ -60,23 +60,16 @@ def natural_neighbor_granularity(NNAM: np.ndarray) -> List[List[int]]:
     return NaNGS
 
 def natural_neighbor_entropy(NaNGS: List[List[int]], n: int) -> float:
-    """Formula 2-14."""
     if n == 0:
         return 0.0
     entropy = 0.0
     for i in range(n):
         ratio = len(NaNGS[i]) / n
-        entropy += np.log2(ratio)
+        if ratio > 0:
+            entropy += np.log2(ratio)
     return -entropy / n
 
 def compute_NaNRE(NaNE: float, NaNE_oi: float) -> float:
-    # 2.2.15:
-    # if NaNE_oi > NaNE, then 1 / (NaNE_oi / NaNE)? Wait, we verified it was 1 / (NaNE_oi / NaNE).
-    # Ah, the paper text:
-    # NaNREP(oi) =
-    # 1                               if NaNE_oi > NaNE
-    # NaNE_oi / NaNE                  if 0 <= NaNE_oi <= NaNE
-    # Let's check my parsing script again!
     if NaNE_oi > NaNE:
         return 1.0
     elif NaNE == 0:
@@ -87,10 +80,36 @@ def compute_NaNRE(NaNE: float, NaNE_oi: float) -> float:
 def compute_weight(NaNGS_i: List[int], n: int) -> float:
     return np.sqrt(len(NaNGS_i) / n)
 
-def NaNREAD(data: np.ndarray) -> np.ndarray:
+def compute_NaNE_oi(i, dist_matrix, n):
+    keep_indices = [j for j in range(n) if j != i]
+    sub_dist_matrix = dist_matrix[np.ix_(keep_indices, keep_indices)]
+    sub_lam, sub_NNAM = natural_neighbor_search(sub_dist_matrix)
+    sub_NaNGS = natural_neighbor_granularity(sub_NNAM)
+    return natural_neighbor_entropy(sub_NaNGS, n - 1)
+
+def evaluate_feature_subset_parallel(subset_indices, data, pool):
+    n = data.shape[0]
+    subset_data = data[:, subset_indices]
+    dist_matrix = calculate_distance_matrix(subset_data)
+    lam, NNAM = natural_neighbor_search(dist_matrix)
+    NaNGS = natural_neighbor_granularity(NNAM)
+    NaNE = natural_neighbor_entropy(NaNGS, n)
+
+    func = partial(compute_NaNE_oi, dist_matrix=dist_matrix, n=n)
+
+    if pool is not None:
+        NaNE_oi_list = pool.map(func, range(n))
+    else:
+        NaNE_oi_list = [func(i) for i in range(n)]
+
+    NaNRE_list = [compute_NaNRE(NaNE, NaNE_oi) for NaNE_oi in NaNE_oi_list]
+    W_list = [compute_weight(NaNGS[i], n) for i in range(n)]
+
+    return NaNRE_list, W_list
+
+def NaNREAD(data: np.ndarray, n_jobs: int = -1) -> np.ndarray:
     n, m = data.shape
 
-    # Min-Max Normalization (Data Preprocessing)
     data_std = np.zeros_like(data, dtype=float)
     for j in range(m):
         col_min = np.min(data[:, j])
@@ -125,52 +144,39 @@ def NaNREAD(data: np.ndarray) -> np.ndarray:
         current_set.append(k)
         ARS.append(list(current_set))
 
-    def evaluate_feature_subset(subset_indices: List[int]):
-        subset_data = data[:, subset_indices]
-        dist_matrix = calculate_distance_matrix(subset_data)
-        lam, NNAM = natural_neighbor_search(dist_matrix)
-        NaNGS = natural_neighbor_granularity(NNAM)
-        NaNE = natural_neighbor_entropy(NaNGS, n)
-
-        counts = np.array([len(g) for g in NaNGS])
-        new_counts_matrix = counts[:, None] - NNAM # shape (n, n)
-        ratio_matrix = new_counts_matrix / (n - 1)
-        np.fill_diagonal(ratio_matrix, 0)
-
-        log2_ratios = np.zeros_like(ratio_matrix, dtype=float)
-        mask = ratio_matrix > 0
-        log2_ratios[mask] = np.log2(ratio_matrix[mask])
-
-        entropy_sums = np.sum(log2_ratios, axis=0) # sum over j
-        NaNE_oi_list = -entropy_sums / (n - 1) if n > 1 else np.zeros(n)
-
-        NaNRE_list = np.zeros(n)
-        for i in range(n):
-            NaNRE_list[i] = compute_NaNRE(NaNE, NaNE_oi_list[i])
-
-        W_list = np.sqrt(counts / n)
-        return NaNRE_list.tolist(), W_list.tolist()
-
     ERMAS = np.zeros((n, m))
     WMAS = np.zeros((n, m))
-    for k_idx, k in enumerate(AS_indices):
-        nanre_list, w_list = evaluate_feature_subset([k])
-        ERMAS[:, k_idx] = nanre_list
-        WMAS[:, k_idx] = w_list
-
     ERMAFS = np.zeros((n, m))
     WMAFS = np.zeros((n, m))
-    for k_idx, subset in enumerate(AFS):
-        nanre_list, w_list = evaluate_feature_subset(subset)
-        ERMAFS[:, k_idx] = nanre_list
-        WMAFS[:, k_idx] = w_list
-
     ERMARS = np.zeros((n, m))
     WMARS = np.zeros((n, m))
-    for k_idx, subset in enumerate(ARS):
-        nanre_list, w_list = evaluate_feature_subset(subset)
-        ERMARS[:, k_idx] = nanre_list
-        WMARS[:, k_idx] = w_list
+
+    if n_jobs == -1:
+        pool = multiprocessing.Pool(multiprocessing.cpu_count())
+    elif n_jobs > 1:
+        pool = multiprocessing.Pool(n_jobs)
+    else:
+        pool = None
+
+    try:
+        for k_idx, k in enumerate(AS_indices):
+            nanre_list, w_list = evaluate_feature_subset_parallel([k], data, pool)
+            ERMAS[:, k_idx] = nanre_list
+            WMAS[:, k_idx] = w_list
+
+        for k_idx, subset in enumerate(AFS):
+            nanre_list, w_list = evaluate_feature_subset_parallel(subset, data, pool)
+            ERMAFS[:, k_idx] = nanre_list
+            WMAFS[:, k_idx] = w_list
+
+        for k_idx, subset in enumerate(ARS):
+            nanre_list, w_list = evaluate_feature_subset_parallel(subset, data, pool)
+            ERMARS[:, k_idx] = nanre_list
+            WMARS[:, k_idx] = w_list
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
 
     AERM = (ERMAS + ERMAFS + ERMARS) / 3.0
     AWM = (WMAS + WMAFS + WMARS) / 3.0
@@ -183,7 +189,6 @@ def NaNREAD(data: np.ndarray) -> np.ndarray:
         NaNREAF[i] = 1.0 - sum_val / m
 
     return NaNREAF
-
 
 if __name__ == "__main__":
     import scipy.io
@@ -212,7 +217,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     try:
-        scores = NaNREAD(data)
+        scores = NaNREAD(data, n_jobs=1)
         print("NaNREAF=", scores)
     except Exception as e:
         print(f"An error occurred during algorithm execution: {e}")
