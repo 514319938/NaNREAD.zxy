@@ -4,52 +4,56 @@ from scipy.spatial.distance import pdist, squareform
 import multiprocessing
 from functools import partial
 
-def calculate_distance_matrix(data: np.ndarray) -> np.ndarray:
-    return squareform(pdist(data, metric='euclidean'))
+# ========== 从上方正确代码复制【精确NNS函数：支持等值tie、数学严格】 ==========
+def calculate_distance_matrix(X, subset_indices=None, q=2):
+    if subset_indices is not None:
+        X_sub = X[:, subset_indices]
+    else:
+        X_sub = X
+    if X_sub.ndim == 1:
+        X_sub = X_sub.reshape(-1, 1)
+    if q==2:
+        dist_array=pdist(X_sub, metric="euclidean")
+    else:
+        dist_array = pdist(X_sub, metric='minkowski', p=q)
+    dist_mat = squareform(dist_array)
+    return dist_mat
 
-def natural_neighbor_search(dist_matrix: np.ndarray) -> Tuple[int, np.ndarray]:
-    n = dist_matrix.shape[0]
+def natural_neighbor_search(dist_mat):
+    n = dist_mat.shape[0]
+    dist_mat_inf = dist_mat.copy()
+    np.fill_diagonal(dist_mat_inf, np.inf)
+    sorted_idx = np.argsort(dist_mat_inf, axis=1, kind='stable')
+    kNNS_matrix = np.zeros((n, n), dtype=bool)
     k = 1
-    NNAM = np.zeros((n, n), dtype=int)
-
-    sorted_dist_matrix = np.sort(dist_matrix, axis=1)
-
-    def get_k_dists(k_val):
-        idx = min(k_val, n - 1)
-        return sorted_dist_matrix[:, idx]
-
-    knns_k_minus_1_mask = np.zeros((n, n), dtype=bool)
-    unconnected_count = n
-    has_neighbor = np.zeros(n, dtype=bool)
-
     while True:
-        k_dists = get_k_dists(k)
-        knns_k_mask = dist_matrix <= (k_dists[:, None] + 1e-9)
-        np.fill_diagonal(knns_k_mask, False)
-
-        diff_mask = knns_k_mask & ~knns_k_minus_1_mask
-        new_edges = diff_mask & knns_k_mask.T
-        sym_new_edges = new_edges | new_edges.T
-
-        NNAM[sym_new_edges] = 1
-
-        if unconnected_count > 0:
-            newly_connected = sym_new_edges.any(axis=1)
-            just_connected = newly_connected & ~has_neighbor
-            has_neighbor |= just_connected
-            unconnected_count -= just_connected.sum()
-
-        if unconnected_count == 0:
+        if k - 1 < n:
+            kth_dists = dist_mat_inf[np.arange(n), sorted_idx[:, k - 1]]
+            new_neighbors = dist_mat_inf <= kth_dists[:, np.newaxis]
+            kNNS_matrix = kNNS_matrix | new_neighbors
+        NNAM = (kNNS_matrix & kNNS_matrix.T).astype(int)
+        if np.all(np.sum(NNAM, axis=1) != 0):
             break
-
-        knns_k_minus_1_mask = knns_k_mask
         k += 1
-        if k >= n:
+        if k > n:
             break
+    lambda_P = k
+    return lambda_P, NNAM
 
-    lam = k - 1 if k > 1 else 1
-    return lam, NNAM
+def calculate_nane(nnam):
+    n = nnam.shape[0]
+    sizes = np.sum(nnam, axis=1)
+    sizes = np.maximum(sizes, 1)
+    probabilities = sizes / n
+    nane = -1.0 / n * np.sum(np.log2(probabilities))
+    return nane, sizes
 
+def calculate_nane_fast(dist_mat):
+    lambda_P, nnam_P = natural_neighbor_search(dist_mat)
+    nane_val, sizes = calculate_nane(nnam_P)
+    return nane_val, sizes
+
+# ========== 原有辅助函数小幅兼容适配，入口不动 ==========
 def natural_neighbor_granularity(NNAM: np.ndarray) -> List[List[int]]:
     n = NNAM.shape[0]
     NaNGS = []
@@ -58,16 +62,6 @@ def natural_neighbor_granularity(NNAM: np.ndarray) -> List[List[int]]:
         neighbors.sort()
         NaNGS.append(neighbors)
     return NaNGS
-
-def natural_neighbor_entropy(NaNGS: List[List[int]], n: int) -> float:
-    if n == 0:
-        return 0.0
-    entropy = 0.0
-    for i in range(n):
-        ratio = len(NaNGS[i]) / n
-        if ratio > 0:
-            entropy += np.log2(ratio)
-    return -entropy / n
 
 def compute_NaNRE(NaNE: float, NaNE_oi: float) -> float:
     if NaNE_oi > NaNE:
@@ -81,68 +75,64 @@ def compute_weight(NaNGS_i: List[int], n: int) -> float:
     return np.sqrt(len(NaNGS_i) / n)
 
 def compute_NaNE_oi(i, dist_matrix, n):
-    keep_indices = [j for j in range(n) if j != i]
-    sub_dist_matrix = dist_matrix[np.ix_(keep_indices, keep_indices)]
-    sub_lam, sub_NNAM = natural_neighbor_search(sub_dist_matrix)
-    sub_NaNGS = natural_neighbor_granularity(sub_NNAM)
-    return natural_neighbor_entropy(sub_NaNGS, n - 1)
+    mask = np.ones(n, dtype=bool)
+    mask[i] = False
+    dist_mat_sub = dist_matrix[mask][:, mask]
+    sub_NaNE, _ = calculate_nane_fast(dist_mat_sub)
+    return sub_NaNE
 
 def evaluate_feature_subset_parallel(subset_indices, data, pool):
     n = data.shape[0]
-    subset_data = data[:, subset_indices]
-    dist_matrix = calculate_distance_matrix(subset_data)
-    lam, NNAM = natural_neighbor_search(dist_matrix)
+    dist_matrix = calculate_distance_matrix(data, subset_indices)
+    NaNE, sizes = calculate_nane_fast(dist_matrix)
+    _, NNAM = natural_neighbor_search(dist_matrix)
     NaNGS = natural_neighbor_granularity(NNAM)
-    NaNE = natural_neighbor_entropy(NaNGS, n)
 
     func = partial(compute_NaNE_oi, dist_matrix=dist_matrix, n=n)
-
     if pool is not None:
         NaNE_oi_list = pool.map(func, range(n))
     else:
         NaNE_oi_list = [func(i) for i in range(n)]
 
-    NaNRE_list = [compute_NaNRE(NaNE, NaNE_oi) for NaNE_oi in NaNE_oi_list]
+    NaNRE_list = [compute_NaNRE(NaNE, oi) for oi in NaNE_oi_list]
     W_list = [compute_weight(NaNGS[i], n) for i in range(n)]
-
     return NaNRE_list, W_list
 
+# ========== 对外入口：NaNREAD(data, n_jobs=-1)【和上层调用完全兼容，不用改实验代码】 ==========
 def NaNREAD(data: np.ndarray, n_jobs: int = -1) -> np.ndarray:
     n, m = data.shape
-
+    # min-max归一化（和上段代码统一）
     data_std = np.zeros_like(data, dtype=float)
     for j in range(m):
         col_min = np.min(data[:, j])
         col_max = np.max(data[:, j])
-        if col_max > col_min:
-            data_std[:, j] = (data[:, j] - col_min) / (col_max - col_min)
-        else:
+        diff = col_max - col_min
+        if diff < 1e-12:
             data_std[:, j] = 0.0
-    data = data_std
+        else:
+            data_std[:, j] = (data[:, j] - col_min) / diff
+    X = data_std
 
+    # 单属性NaNE排序生成AS
     nane_single = []
     for k in range(m):
-        feature_data = data[:, k:k+1]
-        dist_matrix = calculate_distance_matrix(feature_data)
-        lam, NNAM = natural_neighbor_search(dist_matrix)
-        NaNGS = natural_neighbor_granularity(NNAM)
-        NaNE = natural_neighbor_entropy(NaNGS, n)
-        nane_single.append((NaNE, k))
-
+        dist_mat = calculate_distance_matrix(X, [k])
+        nane, _ = calculate_nane_fast(dist_mat)
+        nane_single.append((nane, k))
     nane_single.sort()
     AS_indices = [idx for val, idx in nane_single]
 
+    # 生成AFS、ARS
     AFS = []
-    current_set = []
-    for k in AS_indices:
-        current_set.append(k)
-        AFS.append(list(current_set))
-
+    cur = []
+    for idx in AS_indices:
+        cur.append(idx)
+        AFS.append(cur.copy())
     ARS = []
-    current_set = []
-    for k in reversed(AS_indices):
-        current_set.append(k)
-        ARS.append(list(current_set))
+    cur = []
+    for idx in reversed(AS_indices):
+        cur.append(idx)
+        ARS.append(cur.copy())
 
     ERMAS = np.zeros((n, m))
     WMAS = np.zeros((n, m))
@@ -151,6 +141,7 @@ def NaNREAD(data: np.ndarray, n_jobs: int = -1) -> np.ndarray:
     ERMARS = np.zeros((n, m))
     WMARS = np.zeros((n, m))
 
+    # 进程池
     if n_jobs == -1:
         pool = multiprocessing.Pool(multiprocessing.cpu_count())
     elif n_jobs > 1:
@@ -160,17 +151,15 @@ def NaNREAD(data: np.ndarray, n_jobs: int = -1) -> np.ndarray:
 
     try:
         for k_idx, k in enumerate(AS_indices):
-            nanre_list, w_list = evaluate_feature_subset_parallel([k], data, pool)
+            nanre_list, w_list = evaluate_feature_subset_parallel([k], X, pool)
             ERMAS[:, k_idx] = nanre_list
             WMAS[:, k_idx] = w_list
-
         for k_idx, subset in enumerate(AFS):
-            nanre_list, w_list = evaluate_feature_subset_parallel(subset, data, pool)
+            nanre_list, w_list = evaluate_feature_subset_parallel(subset, X, pool)
             ERMAFS[:, k_idx] = nanre_list
             WMAFS[:, k_idx] = w_list
-
         for k_idx, subset in enumerate(ARS):
-            nanre_list, w_list = evaluate_feature_subset_parallel(subset, data, pool)
+            nanre_list, w_list = evaluate_feature_subset_parallel(subset, X, pool)
             ERMARS[:, k_idx] = nanre_list
             WMARS[:, k_idx] = w_list
     finally:
@@ -183,41 +172,19 @@ def NaNREAD(data: np.ndarray, n_jobs: int = -1) -> np.ndarray:
 
     NaNREAF = np.zeros(n)
     for i in range(n):
-        sum_val = 0.0
-        for k in range(m):
-            sum_val += AERM[i, k] * AWM[i, k]
+        sum_val = np.sum(AERM[i, :] * AWM[i, :])
         NaNREAF[i] = 1.0 - sum_val / m
-
     return NaNREAF
 
+# 自测示例
 if __name__ == "__main__":
     import scipy.io
-    import sys
-
-    def load_mat(filepath):
-        try:
-            return scipy.io.loadmat(filepath)
-        except Exception as e:
-            print(f"Error loading {filepath}: {e}")
-            return None
-
     filepath = 'code/Example.mat'
-    data_dict = load_mat(filepath)
-    if data_dict is None:
-        sys.exit(1)
-
+    mat = scipy.io.loadmat(filepath)
     data = None
-    for key, val in data_dict.items():
-        if not key.startswith('__') and hasattr(val, 'shape'):
-            data = np.array(val)
+    for k,v in mat.items():
+        if not k.startswith('__') and isinstance(v,np.ndarray):
+            data = v
             break
-
-    if data is None:
-        print("Could not find a valid variable in the file.")
-        sys.exit(1)
-
-    try:
-        scores = NaNREAD(data, n_jobs=1)
-        print("NaNREAF=", scores)
-    except Exception as e:
-        print(f"An error occurred during algorithm execution: {e}")
+    score = NaNREAD(data,n_jobs=1)
+    print(score)
