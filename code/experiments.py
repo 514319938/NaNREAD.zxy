@@ -4,7 +4,7 @@ import numpy as np
 import scipy.io
 import xlwt
 from sklearn.metrics import roc_auc_score
-from NaNREAD import NaNREAD
+from nanread import NaNREAD
 import multiprocessing
 
 # 全局固定随机种子 → 保证 AUC 100% 可复现
