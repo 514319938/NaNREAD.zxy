@@ -9,13 +9,10 @@ def ensure_dir(path):
         os.makedirs(path)
 
 # ====== 配置区 ======
-# 请根据您本地的实际路径修改 EXPERIMENTAL_RESULTS_DIR
-# 例如: EXPERIMENTAL_RESULTS_DIR = r"D:\Experimental_results"
 EXPERIMENTAL_RESULTS_DIR = r"D:\Experimental_results"
-
 DATA_DIR = "data"
 RESULTS_DIR = "results"
-FIGURES_DIR = os.path.join(RESULTS_DIR, "_figures")
+FIGURES_DIR = os.path.join(RESULTS_DIR, "_figures", "ROC")
 
 ensure_dir(FIGURES_DIR)
 
@@ -41,11 +38,9 @@ for algo in algorithms:
     if algo not in algo_dir_map and algo != 'NaNREAD':
         algo_dir_map[algo] = f"{algo}_results"
 
-# 为画图提供一些不同样式
 colors = plt.cm.tab20(np.linspace(0, 1, len(algorithms)))
 
 def get_true_labels(dataset):
-    """从原始数据读取真实标签 y"""
     data_path = os.path.join(DATA_DIR, f"{dataset}.mat")
     if not os.path.exists(data_path):
         print(f"警告: 找不到数据集文件 {data_path}")
@@ -59,80 +54,110 @@ def get_true_labels(dataset):
             break
 
     if data is None:
-        print(f"警告: 数据集 {dataset} 中未找到有效的数据矩阵")
+        print(f"警告: 数据集 {dataset} 中未找到有效数据矩阵")
         return None
 
     y = data[:, -1]
     return y
 
-def find_target_mat_file(target_dir, dataset):
-    """在目标文件夹下智能寻找 .mat 文件，忽略带有 lam 或 param 参数的文件"""
-    if not os.path.exists(target_dir):
+def search_mat_file(base_dir, dataset):
+    """递归搜索基准目录下包含数据集名称的无参数 .mat 文件"""
+    matched_files = []
+
+    if not os.path.exists(base_dir):
         return None
 
-    files = [f for f in os.listdir(target_dir) if f.endswith('.mat')]
-    if not files:
+    for root, dirs, files in os.walk(base_dir):
+        for file in files:
+            if file.endswith('.mat') and dataset in file:
+                full_path = os.path.join(root, file)
+                matched_files.append(full_path)
+
+    if not matched_files:
         return None
 
-    # 首先尝试找完全不带 _lam 或 _param 这样的文件
-    for f in files:
-        if 'lam' not in f and 'param' not in f:
-            return os.path.join(target_dir, f)
+    # 优先找不带参数的 (没有 lam 也没有 param)
+    for f in matched_files:
+        if 'lam' not in f.lower() and 'param' not in f.lower():
+            return f
 
-    # fallback: 如果全带参数，那就取第一个
-    return os.path.join(target_dir, files[0])
+    # 如果全带有参数，则取最短的文件名，通常是最基础的文件
+    matched_files.sort(key=len)
+    return matched_files[0]
 
 def get_outlier_scores(dataset, algo):
-    """获取指定算法在该数据集上的异常得分"""
+    # ==================== NaNREAD ====================
     if algo == 'NaNREAD':
-        # NaNREAD 结果存在 results/ 目录下
-        mat_path = os.path.join(RESULTS_DIR, dataset, f"{dataset}.mat")
-        if not os.path.exists(mat_path):
-             print(f"未找到算法 {algo} 在 {dataset} 上的结果文件: {mat_path}")
-             return None
-    else:
-        # 其他对比算法存在 Experimental_results 目录下
-        algo_dir = algo_dir_map[algo]
-        target_dir = os.path.join(EXPERIMENTAL_RESULTS_DIR, algo_dir, dataset)
-        mat_path = find_target_mat_file(target_dir, dataset)
+        path1 = os.path.join(RESULTS_DIR, dataset, f"{dataset}.mat")
+        path2 = os.path.join(RESULTS_DIR, f"{dataset}.mat")
 
-        if mat_path is None or not os.path.exists(mat_path):
-            # 因为之前发现有很多子文件夹找不到，如果是这样，我们可以尝试直接去 algo_dir 找，
-            # 也许并没有一层按 dataset 名字建立的子文件夹？
-            fallback_dir = os.path.join(EXPERIMENTAL_RESULTS_DIR, algo_dir)
-            if os.path.exists(fallback_dir):
-                # 在算法根目录下找包含 dataset 名字的 mat 文件
-                files = [f for f in os.listdir(fallback_dir) if f.endswith('.mat') and dataset in f]
-                for f in files:
-                    if 'lam' not in f and 'param' not in f:
-                        mat_path = os.path.join(fallback_dir, f)
-                        break
-                if mat_path is None and files:
-                    mat_path = os.path.join(fallback_dir, files[0])
+        if os.path.exists(path1):
+            mat_path = path1
+        elif os.path.exists(path2):
+            mat_path = path2
+        else:
+            print(f"[NaNREAD] 未找到 {dataset} 结果文件")
+            return None
 
-            if mat_path is None or not os.path.exists(mat_path):
-                print(f"未找到算法 {algo} 在 {dataset} 上的结果文件夹或文件: {target_dir}")
+        try:
+            mat = scipy.io.loadmat(mat_path)
+            # 根据之前的记录，NaNREAD 使用的是 opt_out_scores
+            if 'opt_out_scores' in mat:
+                scores_array = mat['opt_out_scores']
+            elif dataset in mat:
+                scores_array = mat[dataset]
+            else:
+                print(f"❌[NaNREAD]无 'opt_out_scores' 也无 '{dataset}' 变量，键：{list(mat.keys())}")
                 return None
 
-    try:
-        mat = scipy.io.loadmat(mat_path)
-        if 'opt_out_scores' in mat:
-            scores_array = mat['opt_out_scores']
-            # 处理多列情况，比如 (4177, 2)，只取第一列
-            if scores_array.ndim > 1 and scores_array.shape[1] >= 1:
+            if scores_array.ndim >= 2 and scores_array.shape[1] >= 1:
                 scores = scores_array[:, 0].flatten()
             else:
                 scores = scores_array.flatten()
+            print(f"✅[NaNREAD] {dataset}读取成功,分数长度:{len(scores)}")
             return scores
-        else:
-            print(f"警告: 文件 {mat_path} 中不包含 'opt_out_scores' 变量")
+        except Exception as e:
+            print(f"[NaNREAD]读取异常:{e}")
             return None
-    except Exception as e:
-        print(f"读取文件 {mat_path} 出错: {e}")
-        return None
+
+    # ==================== 其余对比算法 ====================
+    else:
+        algo_dir = algo_dir_map[algo]
+        algo_base = os.path.join(EXPERIMENTAL_RESULTS_DIR, algo_dir)
+
+        # 使用强化搜索，递归查找包含 dataset 的对应 mat
+        mat_path = search_mat_file(algo_base, dataset)
+
+        if not mat_path:
+            print(f"未找到 {algo} 在 {dataset} 上的结果 (.mat 文件)")
+            return None
+
+        try:
+            mat = scipy.io.loadmat(mat_path)
+            # 对比算法大多数也是 opt_out_scores
+            if 'opt_out_scores' in mat:
+                scores_array = mat['opt_out_scores']
+            else:
+                # 尝试其他可能的键名
+                possible_keys = [k for k in mat.keys() if not k.startswith('__')]
+                if len(possible_keys) > 0:
+                    scores_array = mat[possible_keys[0]]
+                else:
+                    print(f"警告: {mat_path} 中找不到有效的分数变量")
+                    return None
+
+            if scores_array.ndim >= 2 and scores_array.shape[1] >= 1:
+                scores = scores_array[:, 0].flatten()
+            else:
+                scores = scores_array.flatten()
+            print(f"✅[{algo}] {dataset}读取成功,分数长度:{len(scores)}")
+            return scores
+        except Exception as e:
+            print(f"读取失败 {mat_path}: {e}")
+            return None
 
 def plot_roc_for_dataset(dataset):
-    print(f"正在处理数据集: {dataset} ...")
+    print(f"\n正在处理: {dataset}")
     y_true = get_true_labels(dataset)
     if y_true is None:
         return
@@ -144,36 +169,35 @@ def plot_roc_for_dataset(dataset):
         if scores is None:
             continue
 
+        # 强制对齐长度 (如用户所提供的)
+        if len(scores) > len(y_true):
+            scores = scores[:len(y_true)]
+
         if len(y_true) != len(scores):
-            print(f"警告: 数据集 {dataset} 和 算法 {algo} 的样本数量不一致 (y_true:{len(y_true)}, scores:{len(scores)})")
+            print(f"⚠️ {algo} 长度不匹配，跳过 (y_true:{len(y_true)}, scores:{len(scores)})")
             continue
 
-        # 计算 ROC 曲线
         fpr, tpr, _ = roc_curve(y_true, scores)
         roc_auc = auc(fpr, tpr)
+        plt.plot(fpr, tpr, color=colors[idx], lw=2, label=f"{algo} (AUC={roc_auc:.4f})")
 
-        # 绘制曲线
-        plt.plot(fpr, tpr, color=colors[idx], lw=2, label=f"{algo} (AUC = {roc_auc:.4f})")
-
-    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate', fontsize=14)
-    plt.ylabel('True Positive Rate', fontsize=14)
+    plt.plot([0,1],[0,1], 'k--', lw=1.5)
+    plt.xlim([0,1])
+    plt.ylim([0,1.05])
+    plt.xlabel('FPR', fontsize=14)
+    plt.ylabel('TPR', fontsize=14)
     plt.title(f'ROC Curve on {dataset}', fontsize=16)
 
-    # Only show legend if we actually plotted anything
-    handles, labels = plt.gca().get_legend_handles_labels()
-    if handles:
+    handles, _ = plt.gca().get_legend_handles_labels()
+    if len(handles) > 0:
         plt.legend(loc="lower right", fontsize=10)
     plt.grid(True, alpha=0.3)
-    plt.tight_layout()
 
-    # 保存图片
-    fig_path = os.path.join(FIGURES_DIR, f"{dataset}_ROC.pdf")
-    plt.savefig(fig_path, format='pdf')
+    plt.tight_layout()
+    save_path = os.path.join(FIGURES_DIR, f"{dataset}_ROC.pdf")
+    plt.savefig(save_path, format='pdf')
     plt.close()
-    print(f"已生成 ROC 图: {fig_path}")
+    print(f"✅ 已生成 ROC 图: {save_path}")
 
 def main():
     if not os.path.exists(EXPERIMENTAL_RESULTS_DIR):
@@ -185,7 +209,7 @@ def main():
     for dataset in datasets:
         plot_roc_for_dataset(dataset)
 
-    print("所有 ROC 图像生成完毕。")
+    print("\n🎉 全部 ROC 图像生成完毕。")
 
 if __name__ == '__main__':
     main()
