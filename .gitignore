@@ -1,2 +1,17 @@
 results/
 exp_out*.log
+
+# Python caching
+__pycache__/
+*.py[cod]
+
+# Local debugging and testing scripts
+debug_*.py
+test_*.py
+replace_*.py
+
+# Locally generated outputs and binaries that shouldn't be tracked
+*.pdf
+*.xls
+*.xlsx
+results/_figures/

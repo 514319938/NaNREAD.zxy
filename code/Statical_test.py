@@ -73,17 +73,14 @@ def compute_CD(avranks, n, alpha="0.05", test="nemenyi"):
 
         return q[k] * np.sqrt((k * (k + 1)) / (6.0 * n))
 
-def graph_ranks(avranks, names, p_values=None, cd=None, cdmethod=None, lowv=None, highv=None, width=6, textspace=1, reverse=False, filename=None, **kwargs):
+def graph_ranks(avranks, names, p_values=None, cd=None, cdmethod=None, lowv=None, highv=None, width=10, textspace=1, reverse=False, filename=None, **kwargs):
     """
     Draws a CD graph, which is used to display the differences in methods' performance.
     """
+    import math
+    import matplotlib.pyplot as plt
     width = float(width)
     textspace = float(textspace)
-
-    def round_to_1(x):
-        if x == 0:
-            return 0
-        return round(x, -int(math.floor(math.log10(abs(x)))))
 
     k = len(avranks)
 
@@ -106,33 +103,63 @@ def graph_ranks(avranks, names, p_values=None, cd=None, cdmethod=None, lowv=None
     br = 0.9
     rankline = br - bl
 
-    ax.plot([bl, br], [scaley, scaley], color="k")
+    ax.plot([bl, br], [scaley, scaley], color="k", lw=2)
 
+    # Draw ticks (reverse axis: highv on left, lowv on right)
     for a in range(lowv, highv + 1):
-        tick_x = bl + rankline * (a - lowv) / d
-        ax.plot([tick_x, tick_x], [scaley - 0.05, scaley + 0.05], color="k")
-        ax.text(tick_x, scaley + 0.1, str(a), ha="center", va="bottom", fontsize=12)
+        tick_x = bl + rankline * (highv - a) / d
+        ax.plot([tick_x, tick_x], [scaley - 0.05, scaley + 0.05], color="k", lw=2)
+        ax.text(tick_x, scaley + 0.1, str(a), ha="center", va="bottom", fontsize=16)
 
     if cd is not None:
-        cdy = scaley + 0.2
-        cdx = bl + rankline * cd / d
-        ax.plot([bl, cdx], [cdy, cdy], color="k", lw=2)
-        ax.plot([bl, bl], [cdy - 0.05, cdy + 0.05], color="k", lw=2)
-        ax.plot([cdx, cdx], [cdy - 0.05, cdy + 0.05], color="k", lw=2)
-        ax.text((bl + cdx) / 2.0, cdy + 0.05, "CD", ha="center", va="bottom", fontsize=12)
+        cdy = scaley + 0.35
+        # Since axis is reversed, CD width on screen is rankline * cd / d
+        # Start at rank 11 (which is at bl) and draw to the right by cd
+        cdx_start = bl
+        cdx_end = bl + rankline * cd / d
+        ax.plot([cdx_start, cdx_end], [cdy, cdy], color="r", lw=2)
+        ax.plot([cdx_start, cdx_start], [cdy - 0.05, cdy + 0.05], color="r", lw=2)
+        ax.plot([cdx_end, cdx_end], [cdy - 0.05, cdy + 0.05], color="r", lw=2)
+        ax.text((cdx_start + cdx_end) / 2.0, cdy + 0.05, f"CD={cd:.3f}", ha="center", va="bottom", fontsize=18, color="r")
 
-    sorted_ranks, sorted_names = zip(*sorted(zip(avranks, names)))
+    # Determine positions based on sorted ranks (highest rank value first for left side)
+    sorted_ranks, sorted_names = zip(*sorted(zip(avranks, names), reverse=True))
 
-    if reverse:
-        sorted_ranks = list(reversed(sorted_ranks))
-        sorted_names = list(reversed(sorted_names))
+    # Draw left side labels (blue)
+    for i in range(math.ceil(k / 2.0)):
+        rank = sorted_ranks[i]
+        name = sorted_names[i]
+        rank_x = bl + rankline * (highv - rank) / d
+        text_y = scaley - cline - distanceh * i
+
+        color = "blue"
+        ax.plot([rank_x, rank_x], [scaley, text_y], color=color)
+        ax.plot([rank_x, bl - 0.05], [text_y, text_y], color=color)
+        ax.text(bl - 0.06, text_y, f"{name}", ha="right", va="center", fontsize=16, color=color)
+
+    # Draw right side labels (VarE, ApproE black, rest dark blue)
+    for i in range(math.ceil(k / 2.0), k):
+        rank = sorted_ranks[i]
+        name = sorted_names[i]
+        rank_x = bl + rankline * (highv - rank) / d
+        text_y = scaley - cline - distanceh * (k - 1 - i)
+
+        if name in ["VarE", "ApproE"]:
+            color = "black"
+        else:
+            color = "navy" # dark blue
+
+        ax.plot([rank_x, rank_x], [scaley, text_y], color=color)
+        ax.plot([rank_x, br + 0.05], [text_y, text_y], color=color)
+        ax.text(br + 0.06, text_y, f"{name}", ha="left", va="center", fontsize=16, color=color)
 
     if cd is not None:
         def get_lines(ranks):
             lines = []
             for i in range(len(ranks)):
                 for j in range(len(ranks) - 1, i, -1):
-                    if ranks[j] - ranks[i] <= cd:
+                    # ranks are sorted descending
+                    if ranks[i] - ranks[j] <= cd:
                         contained = False
                         for l in lines:
                             if l[0] <= i and l[1] >= j:
@@ -145,30 +172,12 @@ def graph_ranks(avranks, names, p_values=None, cd=None, cdmethod=None, lowv=None
     else:
         lines = []
 
-    for i in range(math.ceil(k / 2.0)):
-        rank = sorted_ranks[i]
-        name = sorted_names[i]
-        rank_x = bl + rankline * (rank - lowv) / d
-        text_y = scaley - cline - distanceh * i
-        ax.plot([rank_x, rank_x], [scaley, text_y], color="k")
-        ax.plot([rank_x, bl - 0.05], [text_y, text_y], color="k")
-        ax.text(bl - 0.06, text_y, f"{name}", ha="right", va="center", fontsize=12)
-
-    for i in range(math.ceil(k / 2.0), k):
-        rank = sorted_ranks[i]
-        name = sorted_names[i]
-        rank_x = bl + rankline * (rank - lowv) / d
-        text_y = scaley - cline - distanceh * (k - 1 - i)
-        ax.plot([rank_x, rank_x], [scaley, text_y], color="k")
-        ax.plot([rank_x, br + 0.05], [text_y, text_y], color="k")
-        ax.text(br + 0.06, text_y, f"{name}", ha="left", va="center", fontsize=12)
-
     if lines:
         line_height = scaley - 0.15
         line_spacing = 0.05
         for idx, line in enumerate(lines):
-            start_x = bl + rankline * (sorted_ranks[line[0]] - lowv) / d
-            end_x = bl + rankline * (sorted_ranks[line[1]] - lowv) / d
+            start_x = bl + rankline * (highv - sorted_ranks[line[0]]) / d
+            end_x = bl + rankline * (highv - sorted_ranks[line[1]]) / d
             y = line_height - idx * line_spacing
             ax.plot([start_x, end_x], [y, y], color="r", lw=3)
 
