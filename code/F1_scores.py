@@ -156,8 +156,8 @@ def compute_best_f1(y_true, scores):
 def main():
     print(f"正在生成最佳 F1 分数表格...")
 
-    # 构建一个空的 DataFrame，行是算法，列是数据集
-    f1_df = pd.DataFrame(index=algorithms, columns=datasets)
+    # 构建一个空的 DataFrame，行是数据集，列是算法
+    f1_df = pd.DataFrame(index=datasets, columns=algorithms)
 
     for dataset in datasets:
         print(f"处理数据集: {dataset}")
@@ -177,7 +177,7 @@ def main():
                 continue
 
             best_f1 = compute_best_f1(y_true, scores)
-            f1_df.loc[algo, dataset] = best_f1
+            f1_df.loc[dataset, algo] = best_f1
 
     # 保存为 Excel 文件
     output_path = os.path.join(RESULTS_DIR, "F1_scores.xlsx")
