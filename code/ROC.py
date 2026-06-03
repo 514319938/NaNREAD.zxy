@@ -65,24 +65,64 @@ def get_true_labels(dataset):
     y = data[:, -1]
     return y
 
+def find_target_mat_file(target_dir, dataset):
+    """在目标文件夹下智能寻找 .mat 文件，忽略带有 lam 或 param 参数的文件"""
+    if not os.path.exists(target_dir):
+        return None
+
+    files = [f for f in os.listdir(target_dir) if f.endswith('.mat')]
+    if not files:
+        return None
+
+    # 首先尝试找完全不带 _lam 或 _param 这样的文件
+    for f in files:
+        if 'lam' not in f and 'param' not in f:
+            return os.path.join(target_dir, f)
+
+    # fallback: 如果全带参数，那就取第一个
+    return os.path.join(target_dir, files[0])
+
 def get_outlier_scores(dataset, algo):
     """获取指定算法在该数据集上的异常得分"""
     if algo == 'NaNREAD':
         # NaNREAD 结果存在 results/ 目录下
         mat_path = os.path.join(RESULTS_DIR, dataset, f"{dataset}.mat")
+        if not os.path.exists(mat_path):
+             print(f"未找到算法 {algo} 在 {dataset} 上的结果文件: {mat_path}")
+             return None
     else:
         # 其他对比算法存在 Experimental_results 目录下
         algo_dir = algo_dir_map[algo]
-        mat_path = os.path.join(EXPERIMENTAL_RESULTS_DIR, algo_dir, dataset, f"{dataset}_{algo}.mat")
+        target_dir = os.path.join(EXPERIMENTAL_RESULTS_DIR, algo_dir, dataset)
+        mat_path = find_target_mat_file(target_dir, dataset)
 
-    if not os.path.exists(mat_path):
-        print(f"未找到算法 {algo} 在 {dataset} 上的结果文件: {mat_path}")
-        return None
+        if mat_path is None or not os.path.exists(mat_path):
+            # 因为之前发现有很多子文件夹找不到，如果是这样，我们可以尝试直接去 algo_dir 找，
+            # 也许并没有一层按 dataset 名字建立的子文件夹？
+            fallback_dir = os.path.join(EXPERIMENTAL_RESULTS_DIR, algo_dir)
+            if os.path.exists(fallback_dir):
+                # 在算法根目录下找包含 dataset 名字的 mat 文件
+                files = [f for f in os.listdir(fallback_dir) if f.endswith('.mat') and dataset in f]
+                for f in files:
+                    if 'lam' not in f and 'param' not in f:
+                        mat_path = os.path.join(fallback_dir, f)
+                        break
+                if mat_path is None and files:
+                    mat_path = os.path.join(fallback_dir, files[0])
+
+            if mat_path is None or not os.path.exists(mat_path):
+                print(f"未找到算法 {algo} 在 {dataset} 上的结果文件夹或文件: {target_dir}")
+                return None
 
     try:
         mat = scipy.io.loadmat(mat_path)
         if 'opt_out_scores' in mat:
-            scores = mat['opt_out_scores'].flatten()
+            scores_array = mat['opt_out_scores']
+            # 处理多列情况，比如 (4177, 2)，只取第一列
+            if scores_array.ndim > 1 and scores_array.shape[1] >= 1:
+                scores = scores_array[:, 0].flatten()
+            else:
+                scores = scores_array.flatten()
             return scores
         else:
             print(f"警告: 文件 {mat_path} 中不包含 'opt_out_scores' 变量")
@@ -121,6 +161,7 @@ def plot_roc_for_dataset(dataset):
     plt.xlabel('False Positive Rate', fontsize=14)
     plt.ylabel('True Positive Rate', fontsize=14)
     plt.title(f'ROC Curve on {dataset}', fontsize=16)
+
     # Only show legend if we actually plotted anything
     handles, labels = plt.gca().get_legend_handles_labels()
     if handles:
